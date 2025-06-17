@@ -1,0 +1,4 @@
+#datatype measurement,tag,tag,tag,tag,field,field,field,timestamp
+# default measurement name: trading_events
+trading_events,event_type,rule_id,rule_type,ticker,price,quantity,usdAmount,_time
+,MANUAL_BUY_EXECUTION,Manual_Entry,Manual,ETH-USD,2549.50,0.03898803,99.4000006485,2025-06-13T08:39:35.000Z

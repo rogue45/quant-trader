@@ -1,0 +1,10 @@
+.idea
+node_modules/
+
+*.pid
+*.seed
+*.pid.lock
+
+/dist
+/build
+/out

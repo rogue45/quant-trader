@@ -1,0 +1,10 @@
+{
+  "dependencies": {
+    "@coinbase/coinbase-sdk": "^0.24.0",
+    "@influxdata/influxdb-client": "^1.35.0",
+    "axios": "^1.9.0",
+    "crypto": "^1.0.1",
+    "js-yaml": "^4.1.0",
+    "jsonwebtoken": "^9.0.2"
+  }
+}
