@@ -1,6 +1,8 @@
 .idea
 node_modules/
 
+/auth/cdp_api_key.json
+
 *.pid
 *.seed
 *.pid.lock
