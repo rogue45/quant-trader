@@ -68,8 +68,6 @@ startService().catch(error => {
 });
 
 
-
-
 /**
  * Initializes the bot's state, fetching account balances and historical data.
  */
@@ -169,17 +167,17 @@ async function runITTTEngine() {
           const amountToBuyUSD = CONFIG.account.trade_allocation_usd;
           const quantityToBuy = amountToBuyUSD / currentPrice; // Calculate quantity based on USD allocation
 
+          const adjustedQuantity = ticker === "XRP-USD" ? quantityToBuy.toFixed(6) : quantityToBuy.toFixed(8);
+
           try {
-            const orderResult = await coinbaseClient.placeMarketOrder(ticker, 'BUY', quantityToBuy);
-            // In simulation, orderResult will have { success: true, message: "Simulated order placed." }
-            // In live mode, orderResult will be the actual Coinbase API response.
+            const orderResult = await coinbaseClient.placeMarketOrder(ticker, 'BUY', adjustedQuantity);
             if (orderResult && orderResult.success !== false) { // Check for success, assuming live API might return `undefined` for success
-              console.log(`[${new Date().toISOString()}] ORDER PLACED: Successfully processed BUY for ${quantityToBuy.toFixed(8)} ${baseCurrency} of ${ticker}.`);
+              console.log(`[${new Date().toISOString()}] ORDER PLACED: Successfully processed BUY for ${adjustedQuantity} ${baseCurrency} of ${ticker}.`);
 
               // Update currentHoldings after a successful buy
               currentHoldings[ticker] = {
                   purchasePrice: currentPrice, // The price at this buy event
-                  quantity: (currentHoldings[ticker] ? currentHoldings[ticker].quantity : 0) + quantityToBuy, // Add to existing quantity
+                  quantity: (currentHoldings[ticker] ? currentHoldings[ticker].quantity : 0) + adjustedQuantity, // Add to existing quantity
                   timestamp: new Date().toISOString(),
                   ruleId: rule.id
               };
@@ -188,7 +186,7 @@ async function runITTTEngine() {
                  await influxClient.logTradeEvent({
                     ticker, event_type: "BUY_EXECUTION",
                     price: currentPrice,
-                    quantity: quantityToBuy,
+                    quantity: adjustedQuantity,
                     usdAmount: amountToBuyUSD,
                     rule_id: rule.id,
                     rule_type: rule.type
@@ -239,7 +237,7 @@ async function runITTTEngine() {
             if (evaluateRuleCondition(rule, currentPrice, historicalPrices, holding)) {
                 console.log(`[${new Date().toISOString()}] SELL signal for ${ticker} detected by rule '${rule.id}'!`);
 
-                const quantityToSell = holding.quantity; // Sell the full amount that we tracked as holding
+                const quantityToSell = holding.quantity;
                 const estimatedUSDValue = quantityToSell * currentPrice;
 
                 try {
@@ -304,6 +302,11 @@ function evaluateRuleCondition(rule, currentPrice, historicalPrices, holdingDeta
       case "profit_percentage_target":
          if (!holdingDetails || typeof holdingDetails.purchasePrice !== 'number') return false;
          const targetProfitPrice = holdingDetails.purchasePrice * (1 + params.percentage_above_purchase / 100);
+
+         console.log("profit_percentage_target evaluation: ");
+         console.log("purchase price: " + holdingDetails.purchasePrice);
+         console.log("targetSellPrice: " + targetProfitPrice);
+         console.log("meetsSellCriteria: " + holdingDetails.purchasePrice >= targetProfitPrice);
          return currentPrice >= targetProfitPrice;
 
       case "stop_loss_percentage":
@@ -313,6 +316,10 @@ function evaluateRuleCondition(rule, currentPrice, historicalPrices, holdingDeta
 
       case "bollinger_lower_band_cross":
          const bbLower = calculations.calculateBollingerBands(hPrices, params.period, params.std_dev_multiplier);
+
+         console.log("BB lower: " + bbLower.lowerBand);
+         console.log("Current price: " + currentPrice);
+         console.log("---------------------------");
          return bbLower && bbLower.lowerBand !== null && currentPrice <= bbLower.lowerBand;
 
       case "bollinger_upper_band_cross":

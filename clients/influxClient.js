@@ -25,55 +25,7 @@ function initializeInfluxClient(config) {
    writeApi = client.getWriteApi(org, bucket);
    queryApi = client.getQueryApi(org);
 
-   // Define rowsParser internally or import it if it's in another utility file
-   rowsParser = (keyObjectArray, valuesArray) => {
-      const resultObject = {};
-      let keysArray = keyObjectArray.columns.map(obj => obj.label);
-
-      if (!Array.isArray(valuesArray)) {
-         console.error("Values Input must be arrays.");
-         return resultObject;
-      }
-
-      if (keysArray.length !== valuesArray.length) {
-         console.error("Arrays must be of equal length to create a valid object.");
-         return resultObject;
-      }
-
-      for (let i = 0; i < keysArray.length; i++) {
-         const key = String(keysArray[i]);
-         const value = String(valuesArray[i]);
-         resultObject[key] = value;
-      }
-      return resultObject;
-   };
    console.log(`[${new Date().toISOString()}] InfluxDB client initialized.`);
-}
-
-/**
- * Fetches historical price data for a given ticker from InfluxDB.
- * @param {string} ticker - The trading pair (e.g., "BTC-USD").
- * @param {string} range - Time range for the query (e.g., "-1h", "-7d").
- * @returns {Promise<Array<number>>} An array of historical prices, or an empty array if none found.
- */
-async function getHistoricalPrices(ticker, range = "-1h") {
-   const priceMeasurement = CONFIG.influxdb.price_measurement || 'spot_price';
-   const fluxQuery = `from(bucket: "${CONFIG.influxdb.bucket}")
-    |> range(start: ${range})
-    |> filter(fn: (r) => r._measurement == "${priceMeasurement}")
-    |> filter(fn: (r) => r.ticker == "${ticker}")
-    |> filter(fn: (r) => r._field == "price")
-    |> yield(name: "prices")`;
-
-   const prices = [];
-   try {
-      for await (const { values } of queryApi.iterateRows(fluxQuery)) {
-         prices.push(values._value);
-      }
-   } catch (error) {
-      console.error(`[${new Date().toISOString()}] Error querying historical prices for ${ticker}:`, error);
-   }
-   return prices;
 }
 
 /**
@@ -123,6 +75,35 @@ async function logTradeEvent(eventData) {
 }
 
 /**
+ * Fetches historical price data for a given ticker from InfluxDB.
+ * @param {string} ticker - The trading pair (e.g., "BTC-USD").
+ * @param {string} range - Time range for the query (e.g., "-1h", "-7d").
+ * @returns {Promise<Array<number>>} An array of historical prices, or an empty array if none found.
+ */
+async function getHistoricalPrices(ticker, range = "-1h") {
+   const priceMeasurement = CONFIG.influxdb.price_measurement || 'spot_price';
+   const fluxQuery = `from(bucket: "${CONFIG.influxdb.bucket}")
+    |> range(start: ${range})
+    |> filter(fn: (r) => r._measurement == "${priceMeasurement}")
+    |> filter(fn: (r) => r._field == "price")
+    |> filter(fn: (r) => r["source"] == "coinbase")
+    |> filter(fn: (r) => r["ticker"] == "${ticker}")
+    |> yield(name: "prices")`;
+
+   const prices = [];
+   try {
+      for await (const { values, tableMeta } of queryApi.iterateRows(fluxQuery)) {
+         const o = rowsParser(tableMeta, values);
+
+         prices.push(o._value);
+      }
+   } catch (error) {
+      console.error(`[${new Date().toISOString()}] Error querying historical prices for ${ticker}:`, error);
+   }
+   return prices;
+}
+
+/**
  * Retrieves the effective purchase price and quantity for a currently held asset from InfluxDB.
  * This function calculates a weighted average purchase price based on BUY and SELL events.
  * @param {string} ticker - The trading pair (e.g., "ETH-USD").
@@ -137,9 +118,16 @@ async function getHoldingDetailsFromInfluxDB(ticker) {
     |> range(start: 0) // Query all historical data
     |> filter(fn: (r) => r._measurement == "${tradeMeasurement}")
     |> filter(fn: (r) => r.ticker == "${ticker}")
+        |> filter(fn: (r) => r.ticker == "${ticker}")
+      |> filter(fn: (r) => 
+      r._field == "price" or 
+      r._field == "quantity" or 
+      r._field == "usdAmount"
+    )
     |> filter(fn: (r) =>
         r.event_type == "MANUAL_BUY_EXECUTION"
        )
+    |> pivot(rowKey:["_time", "ticker", "event_type", "rule_id", "rule_type"], columnKey: ["_field"], valueColumn: "_value")   
     |> sort(columns: ["_time"], desc: false)`; // Ensure chronological order
 
    let totalQuantity = 0;

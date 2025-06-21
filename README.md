@@ -15,4 +15,11 @@ https://docs.google.com/document/d/1QNJei_zLhj68I72-ym1-PngyNr4Le1sJFflYinJM1MQ/
 
 
 Image build instructions:
-1) commit code change
+# To build the docker image
+# docker build -t tradebot .
+
+# Tag
+# docker tag tradebot:latest 192.168.1.53:5000/tradebot:latest
+
+# Push
+# docker push 192.168.1.53:5000/tradebot:latest

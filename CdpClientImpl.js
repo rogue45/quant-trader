@@ -39,7 +39,7 @@ class CdpClientImpl {
          return response.data;
       } catch (error) {
          console.error(`[CdpClientImpl] Error fetching accounts from LIVE API:`, error.response ? error.response.data : error.message);
-         // Re-throw to be handled by the calling function (e.g., in server.js)
+         // Re-throw to be handled by the calling function (e.g., in tradebot.js)
          throw new Error(`Failed to fetch accounts: ${error.response ? JSON.stringify(error.response.data) : error.message}`);
       }
    }

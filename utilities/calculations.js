@@ -9,7 +9,7 @@ function calculateSMA(prices, period) {
       return null;
    }
    const relevantPrices = prices.slice(-period); // Get the most recent prices for the period
-   const sum = relevantPrices.reduce((acc, price) => acc + price, 0);
+   const sum = relevantPrices.reduce((acc, price) => acc + parseFloat(price), 0);
    return sum / period;
 }
 

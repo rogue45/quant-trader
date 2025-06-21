@@ -9,11 +9,11 @@
   },
   "buy_rules": [
     {
-      "id": "buy_on_lower_bb_cross_20_2",
+      "id": "buy_on_lower_bb_cross_40_2",
       "description": "Buy if price crosses below or touches the lower Bollinger Band (20-period, 2 StdDev).",
       "type": "bollinger_lower_band_cross",
       "params": {
-        "period": 20,
+        "period": 40,
         "std_dev_multiplier": 2.0
       }
     }
