@@ -26,8 +26,8 @@ try {
 
 // --- InfluxDB Client Setup ---
 let writeApi;
-if (CONFIG.influxdb && CONFIG.influxdb.url && CONFIG.influxdb.token && CONFIG.influxdb.org && CONFIG.influxdb.trade_events_bucket) {
-   const influxDB = new InfluxDB({ url: CONFIG.influxdb.url, token: CONFIG.influxdb.token });
+if (CONFIG.influxdb && CONFIG.influxdb.url && process.env.INFLUX_DB_TOKEN && CONFIG.influxdb.org && CONFIG.influxdb.trade_events_bucket) {
+   const influxDB = new InfluxDB({ url: CONFIG.influxdb.url, token: process.env.INFLUX_DB_TOKEN });
    writeApi = influxDB.getWriteApi(CONFIG.influxdb.org, CONFIG.influxdb.trade_events_bucket);
    console.log(`[${new Date().toISOString()}] InfluxDB: Initialized write API for bucket '${CONFIG.influxdb.trade_events_bucket}'.`);
 } else {
@@ -104,8 +104,8 @@ async function logManualPurchase(ticker, quantity, price, timestamp = new Date()
 async function runScript() {
    // Replace these values with your actual manual purchase details
    const ticker = "ETH-USD";
-   const quantity = 0.03898803; // Example quantity
-   const price = 2549.50;   // Example purchase price
+   const quantity = 0.00827532; // Example quantity
+   const price = 2417.59;   // Example purchase price
 
    console.log(`[${new Date().toISOString()}] Attempting to log manual purchase: ${quantity} ${ticker.split('-')[0]} at $${price}.`);
    await logManualPurchase(ticker, quantity, price);

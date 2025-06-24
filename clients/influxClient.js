@@ -1,7 +1,8 @@
 const { InfluxDB, Point } = require('@influxdata/influxdb-client');
 
 let CONFIG;
-let writeApi;
+let writeApiMarketData; // Dedicated write API for market_data
+let writeApiTradeLogs;  // Dedicated write API for trade_logs
 let queryApi;
 
 /**
@@ -14,15 +15,17 @@ function initializeInfluxClient(config) {
    const url = CONFIG.influxdb.url;
    const token = process.env.INFLUX_DB_TOKEN;
    const org = CONFIG.influxdb.org;
-   const bucket = CONFIG.influxdb.bucket;
+   const marketDataBucket = CONFIG.influxdb.bucket; // market_data
+   const tradeLogsBucket = CONFIG.influxdb.trade_events_bucket; // trade_logs
 
-   if (!url || !token || !org || !bucket) {
+   if (!url || !token || !org || !marketDataBucket || !tradeLogsBucket) {
       console.error("InfluxDB configuration is incomplete. Skipping InfluxDB initialization.");
       return;
    }
 
    const client = new InfluxDB({ url, token });
-   writeApi = client.getWriteApi(org, bucket);
+   writeApiMarketData = client.getWriteApi(org, marketDataBucket); // For market data
+   writeApiTradeLogs = client.getWriteApi(org, tradeLogsBucket); // For trade logs
    queryApi = client.getQueryApi(org);
 
    console.log(`[${new Date().toISOString()}] InfluxDB client initialized.`);
@@ -39,8 +42,8 @@ function initializeInfluxClient(config) {
  * @param {object} [eventData.details] - Additional details for the event.
  */
 async function logTradeEvent(eventData) {
-   if (!writeApi) {
-      console.log(`[${new Date().toISOString()}] InfluxDB logging skipped (no writeApi): ${JSON.stringify(eventData)}`);
+   if (!writeApiTradeLogs) { // Use the dedicated trade logs write API
+      console.log(`[${new Date().toISOString()}] InfluxDB logging skipped (no writeApiTradeLogs): ${JSON.stringify(eventData)}`);
       return;
    }
    const tradeMeasurement = CONFIG.influxdb.trade_events_measurement || 'trading_events';
@@ -66,8 +69,8 @@ async function logTradeEvent(eventData) {
    point.timestamp(eventData.timestamp || new Date());
 
    try {
-      writeApi.writePoint(point);
-      await writeApi.flush();
+      writeApiTradeLogs.writePoint(point); // Write to trade logs bucket
+      await writeApiTradeLogs.flush();
       console.log(`[${new Date().toISOString()}] InfluxDB: Logged ${eventData.event_type} for ${eventData.ticker} via rule '${eventData.rule_id}'.`);
    } catch (error) {
       console.error(`[${new Date().toISOString()}] Error writing trade event to InfluxDB:`, error);
@@ -82,7 +85,7 @@ async function logTradeEvent(eventData) {
  */
 async function getHistoricalPrices(ticker, range = "-1h") {
    const priceMeasurement = CONFIG.influxdb.price_measurement || 'spot_price';
-   const fluxQuery = `from(bucket: "${CONFIG.influxdb.bucket}")
+   const fluxQuery = `from(bucket: "${CONFIG.influxdb.bucket}") // Reads from market_data bucket
     |> range(start: ${range})
     |> filter(fn: (r) => r._measurement == "${priceMeasurement}")
     |> filter(fn: (r) => r._field == "price")
@@ -111,23 +114,24 @@ async function getHistoricalPrices(ticker, range = "-1h") {
  * average purchase price and the net quantity, or null if no historical data.
  */
 async function getHoldingDetailsFromInfluxDB(ticker) {
-   const tradeEventsBucket = CONFIG.influxdb.trade_events_bucket || CONFIG.influxdb.bucket;
+   // Use the dedicated trade events bucket for reading holdings
+   const tradeEventsBucket = CONFIG.influxdb.trade_events_bucket || 'trade_logs';
    const tradeMeasurement = CONFIG.influxdb.trade_events_measurement || 'trading_events';
 
-   const fluxQuery = `from(bucket: "${tradeEventsBucket}")
+   const fluxQuery = `from(bucket: "${tradeEventsBucket}") // Reads from trade_logs bucket
     |> range(start: 0) // Query all historical data
     |> filter(fn: (r) => r._measurement == "${tradeMeasurement}")
     |> filter(fn: (r) => r.ticker == "${ticker}")
         |> filter(fn: (r) => r.ticker == "${ticker}")
-      |> filter(fn: (r) => 
-      r._field == "price" or 
-      r._field == "quantity" or 
+      |> filter(fn: (r) =>
+      r._field == "price" or
+      r._field == "quantity" or
       r._field == "usdAmount"
     )
-    |> filter(fn: (r) =>
-        r.event_type == "MANUAL_BUY_EXECUTION"
-       )
-    |> pivot(rowKey:["_time", "ticker", "event_type", "rule_id", "rule_type"], columnKey: ["_field"], valueColumn: "_value")   
+    |> filter(fn: (r) => 
+      r.event_type == "MANUAL_BUY_EXECUTION" or
+      r.event_type == "BUY_EXECUTION")
+    |> pivot(rowKey:["_time", "ticker", "event_type", "rule_id", "rule_type"], columnKey: ["_field"], valueColumn: "_value")
     |> sort(columns: ["_time"], desc: false)`; // Ensure chronological order
 
    let totalQuantity = 0;
@@ -182,7 +186,7 @@ async function getHoldingDetailsFromInfluxDB(ticker) {
  */
 async function getLatestPrice(ticker) {
    const priceMeasurement = CONFIG.influxdb.price_measurement || 'spot_price';
-   const fluxQuery = `from(bucket: "${CONFIG.influxdb.bucket}")
+   const fluxQuery = `from(bucket: "${CONFIG.influxdb.bucket}") // Reads from market_data bucket
     |> range(start: -5m)
     |> filter(fn: (r) => r._measurement == "${priceMeasurement}")
     |> filter(fn: (r) => r.ticker == "${ticker}")

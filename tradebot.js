@@ -47,10 +47,11 @@ if (CONFIG.mode === "live_trading") {
 }
 
 // --- Global Trading State ---
-let currentAccountBalances = []; // [{ currency: "USD", value: "1000.00" }, { currency: "ETH", value: "0.05" }]
-// currentHoldings will track the purchase details of assets currently held.
-let currentHoldings = {}; // { "ETH-USD": { purchasePrice: 1800, quantity: 0.05, timestamp: Date } }
-let currentMarketPrices = {}; // { "BTC-USD": 60000, "ETH-USD": 1800 }
+let currentAccountBalances = [];
+let currentHoldings = {};
+let currentMarketPrices = {};
+let lastTradeTimestamp = 0;
+
 
 /**
  * Starts the trading bot service.
@@ -91,26 +92,8 @@ async function initializeBotState() {
   }
 
   // 3. Reconstruct current holdings from InfluxDB trade logs
-  currentHoldings = {}; // Clear previous state
-  const nonUSDBalances = currentAccountBalances.filter(b => b.currency !== 'USD' && parseFloat(b.value) > 0);
-  for (const balance of nonUSDBalances) {
-      const baseCurrency = balance.currency;
-      const ticker = `${baseCurrency}-USD`; // Assuming USD pairs
-      const holdingDetails = await influxClient.getHoldingDetailsFromInfluxDB(ticker);
-      if (holdingDetails && holdingDetails.quantity > 0) {
-          // Only add to holdings if we actually have a quantity in our Coinbase balance
-          // and InfluxDB suggests we have a holding.
-          // Use the quantity from the actual Coinbase balance, but the purchase price from InfluxDB.
-          currentHoldings[ticker] = {
-              purchasePrice: holdingDetails.purchasePrice,
-              quantity: parseFloat(balance.value), // Use current actual balance quantity
-              timestamp: holdingDetails.timestamp,
-              ruleId: 'Derived_from_InfluxDB'
-          };
-      }
-  }
+  currentHoldings = await getCurrentHoldings(currentAccountBalances);
   console.log(`[${new Date().toISOString()}] Current Holdings initialized from InfluxDB:`, currentHoldings);
-
   console.log(`[${new Date().toISOString()}] Bot state initialization complete.`);
 }
 
@@ -120,6 +103,14 @@ async function initializeBotState() {
  */
 async function runITTTEngine() {
   console.log(`\n[${new Date().toISOString()}] --- Starting Trading Engine Loop ---`);
+  // Main loop interval (except when cooldown in effect)
+  const intervalMinutes = CONFIG.polling_intervals.main_loop_minutes || 1;
+
+
+  if(isCooldown(Config.trade_cooldown_minutes, lastTradeTimestamp, intervalMinutes)) {
+     setTimeout(runITTTEngine, intervalMinutes * 60 * 1000);
+     return;
+  }
 
   // 1. Refresh market data and account balances
   try {
@@ -193,6 +184,9 @@ async function runITTTEngine() {
                  });
               }
 
+              // Populated cooldown timer to space out trades
+              lastTradeTimestamp = now;
+
               // Re-fetch balances to reflect the trade (important for live, good for simulation demo)
               const rawAccountInfo = await coinbaseClient.getAccounts();
               currentAccountBalances = responseParser.parseAccountBalances(rawAccountInfo);
@@ -252,9 +246,14 @@ async function runITTTEngine() {
                             rule_id: rule.id, rule_type: rule.type,
                             purchasePrice: holding.purchasePrice // Using the actual tracked purchase price
                         });
+
+                        // Populate cooldown timer to space out trades
+                        lastTradeTimestamp = now;
+
                          // Re-fetch balances to reflect the trade
                         const rawAccountInfo = await coinbaseClient.getAccounts();
                         currentAccountBalances = responseParser.parseAccountBalances(rawAccountInfo);
+
                         break; // Execute only the first matching sell rule for this ticker
                     } else {
                         console.error(`[${new Date().toISOString()}] FAILED ORDER: Could not place SELL order for ${ticker}.`, orderResult);
@@ -276,7 +275,6 @@ async function runITTTEngine() {
 
 
   // Schedule the next run
-  const intervalMinutes = CONFIG.polling_intervals.main_loop_minutes || 1;
   setTimeout(runITTTEngine, intervalMinutes * 60 * 1000);
 }
 
@@ -350,4 +348,38 @@ function evaluateRuleCondition(rule, currentPrice, historicalPrices, holdingDeta
          console.warn(`[${new Date().toISOString()}] Unknown rule type: ${rule.type} for rule ID '${rule.id}'.`);
          return false;
    }
+}
+
+async function getCurrentHoldings(currentAccountBalances) {
+   const nonUSDBalances = currentAccountBalances.filter(b => b.currency !== 'USD' && parseFloat(b.value) > 0);
+   const parsedHoldings = {};
+   for (const balance of nonUSDBalances) {
+      const baseCurrency = balance.currency;
+      const ticker = `${baseCurrency}-USD`; // Assuming USD pairs
+      const holdingDetails = await influxClient.getHoldingDetailsFromInfluxDB(ticker);
+      if (holdingDetails && holdingDetails.quantity > 0) {
+         // Only add to holdings if we actually have a quantity in our Coinbase balance
+         // and InfluxDB suggests we have a holding.
+         // Use the quantity from the actual Coinbase balance, but the purchase price from InfluxDB.
+         parsedHoldings[ticker] = {
+            purchasePrice: holdingDetails.purchasePrice,
+            quantity: parseFloat(balance.value), // Use current actual balance quantity
+            timestamp: holdingDetails.timestamp,
+            ruleId: 'Derived_from_InfluxDB'
+         };
+      }
+   }
+   return parsedHoldings;
+}
+
+function isCooldown(cooldownMinutes, lastTradeTimestamp, mainLoopPeriod) {
+   const cooldownPeriodMs = (cooldownMinutes || 0) * 60 * 1000;
+   const now = Date.now();
+
+   if (now - lastTradeTimestamp < cooldownPeriodMs) {
+      const remainingCooldownSeconds = Math.ceil((cooldownPeriodMs - (now - lastTradeTimestamp)) / 1000);
+      console.log(`[${new Date().toISOString()}] Trade cooldown active. Skipping rule evaluation for ${remainingCooldownSeconds} seconds.`);
+      return true;
+   }
+   return false;
 }

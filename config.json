@@ -24,7 +24,7 @@
       "description": "Sell if price is 5% or more above the purchase price.",
       "type": "profit_percentage_target",
       "params": {
-        "percentage_above_purchase": 5.0
+        "percentage_above_purchase": 7.0
       }
     }
   ],
@@ -32,6 +32,7 @@
     "main_loop_minutes": 1,
     "order_status_check_minutes": 5
   },
+  "trade_cooldown_minutes": 15,
   "influxdb": {
     "url": "http://192.168.1.53:8086",
     "org": "deremworks",
