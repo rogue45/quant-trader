@@ -21,6 +21,18 @@ class CdpClient {
    getOpenSellOrders() {
       throw new Error("Method 'getOpenSellOrders' must be implemented.");
    }
+
+   listPortfolios() {
+      throw new Error("Method 'getDefaultPortfolio' must be implemented.");
+   }
+
+   getPortfolio() {
+      throw new Error("Method 'getDefaultPortfolio' must be implemented.");
+   }
+
+   getHistoricalOrdersByTicker() { // New method
+      throw new Error("Method 'getHistoricalOrdersByTicker' must be implemented.");
+   }
 }
 
 module.exports = CdpClient;

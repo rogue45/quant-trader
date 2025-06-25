@@ -106,7 +106,99 @@ class CdpClientImpl {
       return null; // The bot will get prices from InfluxDB instead
    }
 
-   // Add more Coinbase API interaction methods as needed (e.g., cancelOrder, getOrder)
+   /**
+    * Fetches a list of portfolios from Coinbase.
+    * Makes a GET request to /api/v3/brokerage/portfolios.
+    * @returns {Promise<object>} The raw response object from Coinbase API.
+    * @throws {Error} If the API call fails.
+    */
+   async listPortfolios() {
+      console.log(`[CdpClientImpl] Listing portfolios from LIVE API...`);
+      try {
+         const method = 'GET';
+         const requestPath = '/api/v3/brokerage/portfolios';
+         const token = await getAuthToken(method, requestPath);
+         const headers = {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json',
+         };
+         const response = await axios.get(`${COINBASE_API_BASE_URL}${requestPath}`, { headers });
+         return response.data;
+      } catch (error) {
+         console.error(`[CdpClientImpl] Error listing portfolios from LIVE API:`, error.response ? error.response.data : error.message);
+         throw new Error(`Failed to list portfolios: ${error.response ? JSON.stringify(error.response.data) : error.message}`);
+      }
+   }
+
+   /**
+    * Fetches a specific portfolio by its ID from Coinbase.
+    * Makes a GET request to /api/v3/brokerage/portfolios/{portfolio_uuid}.
+    * @param {string} portfolioId - The UUID of the portfolio to retrieve.
+    * @returns {Promise<object>} The raw response object from Coinbase API.
+    * @throws {Error} If the API call fails.
+    */
+   async getPortfolio(portfolioId) {
+      console.log(`[CdpClientImpl] Fetching portfolio ${portfolioId} from LIVE API...`);
+      try {
+         const method = 'GET';
+         const requestPath = `/api/v3/brokerage/portfolios/${portfolioId}`;
+         const token = await getAuthToken(method, requestPath);
+         const headers = {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json',
+         };
+         const response = await axios.get(`${COINBASE_API_BASE_URL}${requestPath}`, { headers });
+         return response.data;
+      } catch (error) {
+         console.error(`[CdpClientImpl] Error fetching portfolio ${portfolioId} from LIVE API:`, error.response ? error.response.data : error.message);
+         throw new Error(`Failed to fetch portfolio: ${error.response ? JSON.stringify(error.response.data) : error.message}`);
+      }
+   }
+
+   /**
+    * Fetches historical orders filtered by ticker.
+    * Uses the /api/v3/brokerage/orders/historical/batch endpoint.
+    * @param {string} ticker - The trading pair (e.g., "BTC-USD").
+    * @param {Array<string>} [statuses=['FILLED', 'DONE']] - Array of order statuses to filter by.
+    * @param {number} [limit=100] - The number of orders to return per page (max 250).
+    * @param {string} [cursor] - Cursor for pagination.
+    * @returns {Promise<object>} The raw response object from Coinbase API.
+    * @throws {Error} If the API call fails.
+    */
+   async getHistoricalOrdersByTicker(ticker, statuses = ['FILLED', 'DONE'], limit = 100, cursor = '') {
+      console.log(`[CdpClientImpl] Fetching historical orders for ${ticker} from LIVE API...`);
+      try {
+         const method = 'GET';
+         const requestPath = '/api/v3/brokerage/orders/historical/batch';
+         // Construct query parameters
+         const queryParams = new URLSearchParams({
+            product_id: ticker,
+            limit: limit.toString(),
+            // The API expects `status` as a query parameter for each status
+            // e.g., ?status=FILLED&status=DONE
+         });
+         statuses.forEach(status => queryParams.append('status', status));
+
+         if (cursor) {
+            queryParams.append('cursor', cursor);
+         }
+
+         const fullRequestPath = `${requestPath}?${queryParams.toString()}`;
+         const token = await getAuthToken(method, fullRequestPath); // Auth token needs full path with query params
+
+         const headers = {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json',
+         };
+
+         const response = await axios.get(`${COINBASE_API_BASE_URL}${fullRequestPath}`, { headers });
+         return response.data;
+      } catch (error) {
+         console.error(`[CdpClientImpl] Error fetching historical orders for ${ticker} from LIVE API:`, error.response ? error.response.data : error.message);
+         throw new Error(`Failed to fetch historical orders: ${error.response ? JSON.stringify(error.response.data) : error.message}`);
+      }
+   }
+
 }
 
 module.exports = CdpClientImpl;

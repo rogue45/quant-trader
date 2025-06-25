@@ -47,18 +47,15 @@ if (CONFIG.mode === "live_trading") {
 }
 
 // --- Global Trading State ---
-let currentAccountBalances = [];
-let currentHoldings = {};
+let currentHoldings = [];
 let currentMarketPrices = {};
 let lastTradeTimestamp = 0;
-
 
 /**
  * Starts the trading bot service.
  */
 async function startService() {
    console.log(`[${new Date().toISOString()}] Starting trading bot service...`);
-   await initializeBotState(); // Fetch initial balances and market data
    runITTTEngine(); // Start the main trading loop
 }
 
@@ -75,14 +72,20 @@ startService().catch(error => {
 async function initializeBotState() {
   console.log(`[${new Date().toISOString()}] Initializing bot state...`);
 
+
+
+
   // 1. Get initial account balances
   try {
-    const rawAccountInfo = await coinbaseClient.getAccounts();
-    currentAccountBalances = responseParser.parseAccountBalances(rawAccountInfo);
-    console.log(`[${new Date().toISOString()}] Initial Account Balances:`, currentAccountBalances);
+     const portfolios = await coinbaseClient.listPortfolios();
+     const defaultPortfolio = portfolios.portfolios.find(p => p.name === "Default");
+     const defaultPortfolioId = defaultPortfolio.uuid;
+     const portfolioAssets = await coinbaseClient.getPortfolio(defaultPortfolioId);
+
+     currentHoldings = responseParser.parsePortfolioAssets(portfolioAssets);
+    console.log(`[${new Date().toISOString()}] Coinbase derived holdings:`, currentHoldings);
   } catch (error) {
     console.error(`[${new Date().toISOString()}] Failed to fetch initial account balances:`, error);
-    currentAccountBalances = [];
   }
 
   // 2. Populate initial market prices
@@ -90,11 +93,6 @@ async function initializeBotState() {
     currentMarketPrices[ticker] = await influxClient.getLatestPrice(ticker);
     console.log(`[${new Date().toISOString()}] Latest price for ${ticker}: ${currentMarketPrices[ticker]}`);
   }
-
-  // 3. Reconstruct current holdings from InfluxDB trade logs
-  currentHoldings = await getCurrentHoldings(currentAccountBalances);
-  console.log(`[${new Date().toISOString()}] Current Holdings initialized from InfluxDB:`, currentHoldings);
-  console.log(`[${new Date().toISOString()}] Bot state initialization complete.`);
 }
 
 /**
@@ -106,58 +104,46 @@ async function runITTTEngine() {
   // Main loop interval (except when cooldown in effect)
   const intervalMinutes = CONFIG.polling_intervals.main_loop_minutes || 1;
 
-
-  if(isCooldown(Config.trade_cooldown_minutes, lastTradeTimestamp, intervalMinutes)) {
-     setTimeout(runITTTEngine, intervalMinutes * 60 * 1000);
-     return;
-  }
-
   // 1. Refresh market data and account balances
   try {
-    const rawAccountInfo = await coinbaseClient.getAccounts();
-    currentAccountBalances = responseParser.parseAccountBalances(rawAccountInfo);
-    console.log(`[${new Date().toISOString()}] Current Balances:`, currentAccountBalances.map(b => `${parseFloat(b.value).toFixed(6)} ${b.currency}`).join(', '));
-
-    for (const ticker of CONFIG.tickers_to_watch) {
-      currentMarketPrices[ticker] = await influxClient.getLatestPrice(ticker);
-      if (currentMarketPrices[ticker] === null) {
-        console.warn(`[${new Date().toISOString()}] No recent price data for ${ticker}. Skipping rule evaluation for this ticker.`);
-      }
-    }
+    await initializeBotState();
   } catch (error) {
     console.error(`[${new Date().toISOString()}] Error refreshing data:`, error);
     return; // Skip this loop iteration if data refresh fails
   }
 
-  const usdBalance = parseFloat(currentAccountBalances.find(b => b.currency === 'USD')?.value || '0');
+  const usdBalance = parseFloat(currentHoldings.find(b => b.asset === 'USD')?.quantity || '0');
   console.log(`[${new Date().toISOString()}] Available USD: $${usdBalance.toFixed(2)}`);
 
   // 2. Evaluate Buy Opportunities
   // Loop through tickers to watch
   for (const ticker of CONFIG.tickers_to_watch) {
-    const currentPrice = currentMarketPrices[ticker];
+     // Evaluate cooldown per ticker so we don't just end up buying all assets at the same time on price redirection
+     if(isCooldown(CONFIG.trade_cooldown_minutes, lastTradeTimestamp, intervalMinutes)) {
+        setTimeout(runITTTEngine, intervalMinutes * 60 * 1000);
+        return;
+     }
+
+    const currentPrice = parseFloat(currentMarketPrices[ticker]);
     if (currentPrice === null) continue; // Skip if no price data
 
-    // Check if we already hold this asset (to avoid double buying unless intended)
-    // Note: This check relies on the currentAccountBalances, which reflects real holdings.
     const baseCurrency = ticker.split('-')[0];
-    const heldQuantity = parseFloat(currentAccountBalances.find(b => b.currency === baseCurrency)?.value || '0');
 
     // Only buy if we have sufficient USD and are not currently holding this asset
     if (usdBalance >= CONFIG.account.trade_allocation_usd) {
-      const historicalPrices = await influxClient.getHistoricalPrices(ticker, "-24h"); // Get 24 hours of data for indicators
+      // Ensure we have enough historical data for a ticker to analyze
+       const historicalPrices = await influxClient.getHistoricalPrices(ticker, "-24h"); // Get 24 hours of data for indicators
       if (historicalPrices.length < 20) { // Check if enough data for common indicators (e.g., 20-period BB)
           console.warn(`[${new Date().toISOString()}] Not enough historical price data for ${ticker} (${historicalPrices.length} points). Skipping buy rule evaluation.`);
           continue;
       }
 
       for (const rule of CONFIG.buy_rules) {
-        if (evaluateRuleCondition(rule, currentPrice, historicalPrices)) {
+        if (evaluateRuleCondition(ticker, rule, currentPrice, historicalPrices)) {
           console.log(`[${new Date().toISOString()}] BUY signal for ${ticker} detected by rule '${rule.id}'!`);
 
           const amountToBuyUSD = CONFIG.account.trade_allocation_usd;
           const quantityToBuy = amountToBuyUSD / currentPrice; // Calculate quantity based on USD allocation
-
           const adjustedQuantity = ticker === "XRP-USD" ? quantityToBuy.toFixed(6) : quantityToBuy.toFixed(8);
 
           try {
@@ -165,31 +151,9 @@ async function runITTTEngine() {
             if (orderResult && orderResult.success !== false) { // Check for success, assuming live API might return `undefined` for success
               console.log(`[${new Date().toISOString()}] ORDER PLACED: Successfully processed BUY for ${adjustedQuantity} ${baseCurrency} of ${ticker}.`);
 
-              // Update currentHoldings after a successful buy
-              currentHoldings[ticker] = {
-                  purchasePrice: currentPrice, // The price at this buy event
-                  quantity: (currentHoldings[ticker] ? currentHoldings[ticker].quantity : 0) + adjustedQuantity, // Add to existing quantity
-                  timestamp: new Date().toISOString(),
-                  ruleId: rule.id
-              };
-
-              if (CONFIG.mode == 'live_trading') {
-                 await influxClient.logTradeEvent({
-                    ticker, event_type: "BUY_EXECUTION",
-                    price: currentPrice,
-                    quantity: adjustedQuantity,
-                    usdAmount: amountToBuyUSD,
-                    rule_id: rule.id,
-                    rule_type: rule.type
-                 });
-              }
-
               // Populated cooldown timer to space out trades
               lastTradeTimestamp = now;
 
-              // Re-fetch balances to reflect the trade (important for live, good for simulation demo)
-              const rawAccountInfo = await coinbaseClient.getAccounts();
-              currentAccountBalances = responseParser.parseAccountBalances(rawAccountInfo);
               break; // Execute only the first matching buy rule for this ticker
             } else {
               console.error(`[${new Date().toISOString()}] FAILED ORDER: Could not place BUY order for ${ticker}.`, orderResult);
@@ -207,20 +171,24 @@ async function runITTTEngine() {
 
   // 3. Evaluate Sell Opportunities
   // Iterate through non-USD balances that are also present in our currentHoldings tracking
-  for (const ticker in currentHoldings) {
-    const holding = currentHoldings[ticker]; // Get holding details from our tracked state
-    const currentPrice = currentMarketPrices[ticker];
+  for (const asset of currentHoldings) {
+    const assetName = asset.asset;
+    const ticker = assetName + "-USD"
+    const currentPrice = parseFloat(currentMarketPrices[ticker]);
+
+    if(assetName === "USD") {
+       continue;
+    }
 
     if (currentPrice === null || currentPrice === undefined) {
       console.warn(`[${new Date().toISOString()}] No recent price data for ${ticker}. Skipping sell rule evaluation for this holding.`);
       continue; // Skip if no price data for this ticker
     }
 
-    const baseCurrency = ticker.split('-')[0];
-    const heldQuantityFromBalance = parseFloat(currentAccountBalances.find(b => b.currency === baseCurrency)?.value || '0');
+    const heldQuantityFromBalance = parseFloat(asset.quantity || '0');
 
     // Only consider selling if the actual account balance shows we hold a significant quantity
-    if (heldQuantityFromBalance > 0 && holding.quantity > 0 && heldQuantityFromBalance >= holding.quantity * 0.99) { // Check for a close match
+    if (heldQuantityFromBalance > 0) { // Check for a close match
         const historicalPrices = await influxClient.getHistoricalPrices(ticker, "-24h"); // Get 24 hours of data for indicators
         if (historicalPrices.length < 20) {
             console.warn(`[${new Date().toISOString()}] Not enough historical price data for ${ticker} (${historicalPrices.length} points). Skipping sell rule evaluation.`);
@@ -228,31 +196,19 @@ async function runITTTEngine() {
         }
 
         for (const rule of CONFIG.sell_rules) {
-            if (evaluateRuleCondition(rule, currentPrice, historicalPrices, holding)) {
+            if (evaluateRuleCondition(ticker, rule, currentPrice, historicalPrices, asset)) {
                 console.log(`[${new Date().toISOString()}] SELL signal for ${ticker} detected by rule '${rule.id}'!`);
 
-                const quantityToSell = holding.quantity;
+                const quantityToSell = asset.quantity;
                 const estimatedUSDValue = quantityToSell * currentPrice;
 
                 try {
                     const orderResult = await coinbaseClient.placeMarketOrder(ticker, 'SELL', quantityToSell);
                     if (orderResult && orderResult.success !== false) {
-                        console.log(`[${new Date().toISOString()}] ORDER PLACED: Successfully processed SELL for ${quantityToSell.toFixed(8)} ${baseCurrency} of ${ticker}.`);
-                        delete currentHoldings[ticker]; // Remove from holdings after sale
-
-                        await influxClient.logTradeEvent({
-                            ticker, event_type: (CONFIG.mode === "live_trading" ? "SELL_EXECUTION" : "SELL_SIMULATION"), price: currentPrice,
-                            quantity: quantityToSell, usdAmount: estimatedUSDValue,
-                            rule_id: rule.id, rule_type: rule.type,
-                            purchasePrice: holding.purchasePrice // Using the actual tracked purchase price
-                        });
+                        console.log(`[${new Date().toISOString()}] ORDER PLACED: Successfully processed SELL for ${quantityToSell.toFixed(8)} ${assetName} of ${ticker}.`);
 
                         // Populate cooldown timer to space out trades
                         lastTradeTimestamp = now;
-
-                         // Re-fetch balances to reflect the trade
-                        const rawAccountInfo = await coinbaseClient.getAccounts();
-                        currentAccountBalances = responseParser.parseAccountBalances(rawAccountInfo);
 
                         break; // Execute only the first matching sell rule for this ticker
                     } else {
@@ -263,9 +219,8 @@ async function runITTTEngine() {
                 }
             }
         }
-    } else if (heldQuantityFromBalance === 0 && holding.quantity > 0) {
-        console.log(`[${new Date().toISOString()}] Tracked holding for ${ticker} but actual balance is zero. Removing from holdings.`);
-        delete currentHoldings[ticker]; // Clean up inconsistencies
+    } else if (heldQuantityFromBalance === 0 && asset.quantity > 0) {
+        console.log(`[${new Date().toISOString()}] Tracked holding for ${ticker} but actual balance is zero.`);
     } else {
         console.log(`[${new Date().toISOString()}] No significant holdings found for ${ticker} or quantity is zero. Skipping sell check.`);
     }
@@ -280,13 +235,14 @@ async function runITTTEngine() {
 
 /**
  * Evaluates a single trading rule condition.
+ * @param ticker
  * @param {object} rule - The rule object from config.
  * @param {number} currentPrice - The current market price of the asset.
  * @param {Array<number>} historicalPrices - Array of historical prices needed for indicator calculations.
- * @param {object} [holdingDetails] - Details of the current holding for sell rules (e.g., { purchasePrice: number }).
+ * @param {object} [holdingDetails] - Details of the current holding for sell rules
  * @returns {boolean} True if the rule condition is met, false otherwise.
  */
-function evaluateRuleCondition(rule, currentPrice, historicalPrices, holdingDetails = {}) {
+function evaluateRuleCondition(ticker, rule, currentPrice, historicalPrices, holdingDetails = {}) {
    const params = rule.params;
    const hPrices = Array.isArray(historicalPrices) ? historicalPrices : [];
 
@@ -298,26 +254,28 @@ function evaluateRuleCondition(rule, currentPrice, historicalPrices, holdingDeta
          return currentPrice <= targetSmaPrice;
 
       case "profit_percentage_target":
-         if (!holdingDetails || typeof holdingDetails.purchasePrice !== 'number') return false;
-         const targetProfitPrice = holdingDetails.purchasePrice * (1 + params.percentage_above_purchase / 100);
+         if (!holdingDetails || typeof holdingDetails.average_usd_price !== 'number') return false;
+         const targetProfitPrice = holdingDetails.average_usd_price * (1 + params.percentage_above_purchase / 100);
 
+         console.log("----------------------------");
+         console.log(ticker + " sell evaluation");
          console.log("profit_percentage_target evaluation: ");
-         console.log("purchase price: " + holdingDetails.purchasePrice);
+         console.log("avg_purchase price: " + holdingDetails.average_usd_price);
          console.log("targetSellPrice: " + targetProfitPrice);
-         console.log("meetsSellCriteria: " + holdingDetails.purchasePrice >= targetProfitPrice);
+         console.log("meetsSellCriteria: " +  holdingDetails.average_usd_price >= targetProfitPrice);
          return currentPrice >= targetProfitPrice;
 
       case "stop_loss_percentage":
-         if (!holdingDetails || typeof holdingDetails.purchasePrice !== 'number') return false;
-         const targetStopPrice = holdingDetails.purchasePrice * (1 - params.percentage_below_purchase / 100);
+         if (!holdingDetails || typeof  holdingDetails.average_usd_price !== 'number') return false;
+         const targetStopPrice =  holdingDetails.average_usd_price * (1 - params.percentage_below_purchase / 100);
          return currentPrice <= targetStopPrice;
 
       case "bollinger_lower_band_cross":
          const bbLower = calculations.calculateBollingerBands(hPrices, params.period, params.std_dev_multiplier);
-
+         console.log("---------------------------");
+         console.log(ticker + " buy evaluation")
          console.log("BB lower: " + bbLower.lowerBand);
          console.log("Current price: " + currentPrice);
-         console.log("---------------------------");
          return bbLower && bbLower.lowerBand !== null && currentPrice <= bbLower.lowerBand;
 
       case "bollinger_upper_band_cross":
@@ -337,39 +295,17 @@ function evaluateRuleCondition(rule, currentPrice, historicalPrices, holdingDeta
          return rocBuy !== null && rocBuy <= params.dip_percentage_trigger;
 
       case "roc_spike":
-         if (!holdingDetails || typeof holdingDetails.purchasePrice !== 'number') return false;
+         if (!holdingDetails || typeof holdingDetails.average_usd_price !== 'number') return false;
          // Make sure there are enough prices for ROC calculation (roc_period + 1 values)
          if (hPrices.length < params.roc_period) return false;
          const pricesForRocSell = [...hPrices.slice(-(params.roc_period)), currentPrice];
          const rocSell = calculations.calculateROC(pricesForRocSell, params.roc_period);
-         return rocSell !== null && rocSell >= params.spike_percentage_trigger && currentPrice > holdingDetails.purchasePrice;
+         return rocSell !== null && rocSell >= params.spike_percentage_trigger && currentPrice > holdingDetails.average_usd_price;
 
       default:
          console.warn(`[${new Date().toISOString()}] Unknown rule type: ${rule.type} for rule ID '${rule.id}'.`);
          return false;
    }
-}
-
-async function getCurrentHoldings(currentAccountBalances) {
-   const nonUSDBalances = currentAccountBalances.filter(b => b.currency !== 'USD' && parseFloat(b.value) > 0);
-   const parsedHoldings = {};
-   for (const balance of nonUSDBalances) {
-      const baseCurrency = balance.currency;
-      const ticker = `${baseCurrency}-USD`; // Assuming USD pairs
-      const holdingDetails = await influxClient.getHoldingDetailsFromInfluxDB(ticker);
-      if (holdingDetails && holdingDetails.quantity > 0) {
-         // Only add to holdings if we actually have a quantity in our Coinbase balance
-         // and InfluxDB suggests we have a holding.
-         // Use the quantity from the actual Coinbase balance, but the purchase price from InfluxDB.
-         parsedHoldings[ticker] = {
-            purchasePrice: holdingDetails.purchasePrice,
-            quantity: parseFloat(balance.value), // Use current actual balance quantity
-            timestamp: holdingDetails.timestamp,
-            ruleId: 'Derived_from_InfluxDB'
-         };
-      }
-   }
-   return parsedHoldings;
 }
 
 function isCooldown(cooldownMinutes, lastTradeTimestamp, mainLoopPeriod) {
