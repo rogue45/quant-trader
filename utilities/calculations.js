@@ -5,9 +5,14 @@
  * @returns {number|null} The calculated SMA, or null if there aren't enough prices.
  */
 function calculateSMA(prices, period) {
-   if (!prices || prices.length < period) {
+   if (!prices) {
       return null;
+   } else if(prices.length < period) {
+      console.warn("Historical Pricing is less than necessary for configured rule period");
+      period = prices.length;
    }
+
+
    const relevantPrices = prices.slice(-period); // Get the most recent prices for the period
    const sum = relevantPrices.reduce((acc, price) => acc + parseFloat(price), 0);
    return sum / period;

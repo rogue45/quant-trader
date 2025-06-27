@@ -104,6 +104,7 @@ async function runITTTEngine() {
   // Main loop interval (except when cooldown in effect)
   const intervalMinutes = CONFIG.polling_intervals.main_loop_minutes || 1;
 
+
   // 1. Refresh market data and account balances
   try {
     await initializeBotState();
@@ -132,7 +133,7 @@ async function runITTTEngine() {
     // Only buy if we have sufficient USD and are not currently holding this asset
     if (usdBalance >= CONFIG.account.trade_allocation_usd) {
       // Ensure we have enough historical data for a ticker to analyze
-       const historicalPrices = await influxClient.getHistoricalPrices(ticker, "-24h"); // Get 24 hours of data for indicators
+       const historicalPrices = await influxClient.getHistoricalPrices(ticker, "-73h"); // Get 72 hours of data for indicators
       if (historicalPrices.length < 20) { // Check if enough data for common indicators (e.g., 20-period BB)
           console.warn(`[${new Date().toISOString()}] Not enough historical price data for ${ticker} (${historicalPrices.length} points). Skipping buy rule evaluation.`);
           continue;
@@ -147,12 +148,13 @@ async function runITTTEngine() {
           const adjustedQuantity = ticker === "XRP-USD" ? quantityToBuy.toFixed(6) : quantityToBuy.toFixed(8);
 
           try {
-            const orderResult = await coinbaseClient.placeMarketOrder(ticker, 'BUY', adjustedQuantity);
+            const orderResult = await coinbaseClient.placeLimitBuyOrder(ticker, adjustedQuantity, currentPrice);
+
             if (orderResult && orderResult.success !== false) { // Check for success, assuming live API might return `undefined` for success
               console.log(`[${new Date().toISOString()}] ORDER PLACED: Successfully processed BUY for ${adjustedQuantity} ${baseCurrency} of ${ticker}.`);
 
               // Populated cooldown timer to space out trades
-              lastTradeTimestamp = now;
+              lastTradeTimestamp = Date.now();
 
               break; // Execute only the first matching buy rule for this ticker
             } else {
@@ -200,15 +202,14 @@ async function runITTTEngine() {
                 console.log(`[${new Date().toISOString()}] SELL signal for ${ticker} detected by rule '${rule.id}'!`);
 
                 const quantityToSell = asset.quantity;
-                const estimatedUSDValue = quantityToSell * currentPrice;
 
                 try {
-                    const orderResult = await coinbaseClient.placeMarketOrder(ticker, 'SELL', quantityToSell);
+                    const orderResult = await coinbaseClient.placeLimitSellOrder(ticker, quantityToSell, currentPrice)
                     if (orderResult && orderResult.success !== false) {
                         console.log(`[${new Date().toISOString()}] ORDER PLACED: Successfully processed SELL for ${quantityToSell.toFixed(8)} ${assetName} of ${ticker}.`);
 
                         // Populate cooldown timer to space out trades
-                        lastTradeTimestamp = now;
+                        lastTradeTimestamp = Date.now();
 
                         break; // Execute only the first matching sell rule for this ticker
                     } else {
@@ -247,12 +248,32 @@ function evaluateRuleCondition(ticker, rule, currentPrice, historicalPrices, hol
    const hPrices = Array.isArray(historicalPrices) ? historicalPrices : [];
 
    switch (rule.type) {
+      // Buy rule evals
+
       case "sma_dip_percentage":
-         const sma = calculations.calculateSMA(hPrices, params.sma_days);
+         const sma = calculations.calculateSMA(hPrices, params.sma_days * 1440);
          if (sma === null) return false;
          const targetSmaPrice = sma * (1 - params.percentage_below_sma / 100);
          return currentPrice <= targetSmaPrice;
 
+      case "bollinger_lower_band_cross":
+         const bbLower = calculations.calculateBollingerBands(hPrices, params.period, params.std_dev_multiplier);
+         console.log("---------------------------");
+         console.log(ticker + " buy evaluation")
+         console.log("BB lower: " + bbLower.lowerBand);
+         console.log("Current price: " + currentPrice);
+         return bbLower && bbLower.lowerBand !== null && currentPrice <= bbLower.lowerBand;
+
+
+      case "roc_dip":
+         // ROC needs current price and past prices.
+         // Make sure there are enough prices for ROC calculation (roc_period + 1 values)
+         if (hPrices.length < params.roc_period) return false; // Need at least `roc_period` historical prices
+         const pricesForRocBuy = [...hPrices.slice(-(params.roc_period)), currentPrice];
+         const rocBuy = calculations.calculateROC(pricesForRocBuy, params.roc_period);
+         return rocBuy !== null && rocBuy <= params.dip_percentage_trigger;
+
+      // Sell rule evals
       case "profit_percentage_target":
          if (!holdingDetails || typeof holdingDetails.average_usd_price !== 'number') return false;
          const targetProfitPrice = holdingDetails.average_usd_price * (1 + params.percentage_above_purchase / 100);
@@ -265,34 +286,10 @@ function evaluateRuleCondition(ticker, rule, currentPrice, historicalPrices, hol
          console.log("meetsSellCriteria: " +  holdingDetails.average_usd_price >= targetProfitPrice);
          return currentPrice >= targetProfitPrice;
 
-      case "stop_loss_percentage":
-         if (!holdingDetails || typeof  holdingDetails.average_usd_price !== 'number') return false;
-         const targetStopPrice =  holdingDetails.average_usd_price * (1 - params.percentage_below_purchase / 100);
-         return currentPrice <= targetStopPrice;
-
-      case "bollinger_lower_band_cross":
-         const bbLower = calculations.calculateBollingerBands(hPrices, params.period, params.std_dev_multiplier);
-         console.log("---------------------------");
-         console.log(ticker + " buy evaluation")
-         console.log("BB lower: " + bbLower.lowerBand);
-         console.log("Current price: " + currentPrice);
-         return bbLower && bbLower.lowerBand !== null && currentPrice <= bbLower.lowerBand;
 
       case "bollinger_upper_band_cross":
          const bbUpper = calculations.calculateBollingerBands(hPrices, params.period, params.std_dev_multiplier);
          return bbUpper && bbUpper.upperBand !== null && currentPrice >= bbUpper.upperBand;
-
-      case "bollinger_middle_band_cross":
-         const bbMiddle = calculations.calculateBollingerBands(hPrices, params.period, params.std_dev_multiplier);
-         return bbMiddle && bbMiddle.middleBand !== null && currentPrice >= bbMiddle.middleBand;
-
-      case "roc_dip":
-         // ROC needs current price and past prices.
-         // Make sure there are enough prices for ROC calculation (roc_period + 1 values)
-         if (hPrices.length < params.roc_period) return false; // Need at least `roc_period` historical prices
-         const pricesForRocBuy = [...hPrices.slice(-(params.roc_period)), currentPrice];
-         const rocBuy = calculations.calculateROC(pricesForRocBuy, params.roc_period);
-         return rocBuy !== null && rocBuy <= params.dip_percentage_trigger;
 
       case "roc_spike":
          if (!holdingDetails || typeof holdingDetails.average_usd_price !== 'number') return false;
@@ -302,6 +299,10 @@ function evaluateRuleCondition(ticker, rule, currentPrice, historicalPrices, hol
          const rocSell = calculations.calculateROC(pricesForRocSell, params.roc_period);
          return rocSell !== null && rocSell >= params.spike_percentage_trigger && currentPrice > holdingDetails.average_usd_price;
 
+      // case "stop_loss_percentage":
+      //    if (!holdingDetails || typeof  holdingDetails.average_usd_price !== 'number') return false;
+      //    const targetStopPrice =  holdingDetails.average_usd_price * (1 - params.percentage_below_purchase / 100);
+      //    return currentPrice <= targetStopPrice;
       default:
          console.warn(`[${new Date().toISOString()}] Unknown rule type: ${rule.type} for rule ID '${rule.id}'.`);
          return false;

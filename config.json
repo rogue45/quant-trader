@@ -9,12 +9,12 @@
   },
   "buy_rules": [
     {
-      "id": "buy_on_lower_bb_cross_40_2",
-      "description": "Buy if price crosses below or touches the lower Bollinger Band (20-period, 2 StdDev).",
-      "type": "bollinger_lower_band_cross",
+      "id": "5% dip from sma",
+      "description": "Buy if price drops 7% from sma",
+      "type": "sma_dip_percentage",
       "params": {
-        "period": 40,
-        "std_dev_multiplier": 2.0
+        "sma_days": 3,
+        "percentage_below_sma": 5
       }
     }
   ],
@@ -24,7 +24,7 @@
       "description": "Sell if price is 5% or more above the purchase price.",
       "type": "profit_percentage_target",
       "params": {
-        "percentage_above_purchase": 7.0
+        "percentage_above_purchase": 5.0
       }
     }
   ],
@@ -32,7 +32,7 @@
     "main_loop_minutes": 1,
     "order_status_check_minutes": 5
   },
-  "trade_cooldown_minutes": 15,
+  "trade_cooldown_minutes": 60,
   "influxdb": {
     "url": "http://192.168.1.53:8086",
     "org": "deremworks",

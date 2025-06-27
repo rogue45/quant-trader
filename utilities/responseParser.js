@@ -14,7 +14,7 @@ const responseParser = {
          for (const position of positions) {
             holdings.push({
                asset: position.asset,
-               quantity: position.total_balance_crypto,
+               quantity: position.available_to_trade_crypto,
                average_usd_price: parseFloat(position.average_entry_price.value)
             });
          }

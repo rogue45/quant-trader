@@ -5,7 +5,8 @@
 
 // Import necessary modules
 const { getAuthToken } = require('./auth/auth'); // Your provided auth.js
-const axios = require('axios'); // For making HTTP requests
+const axios = require('axios');
+const CdpClient = require("./CdpClient"); // For making HTTP requests
 
 // Coinbase API Base URL (should ideally come from config, but hardcoding for simplicity here)
 const COINBASE_API_BASE_URL = "https://api.coinbase.com"; // From config.json
@@ -14,8 +15,9 @@ const COINBASE_API_BASE_URL = "https://api.coinbase.com"; // From config.json
  * A client for interacting with the Coinbase Advanced Trade API.
  * This class handles actual HTTP requests for live trading operations.
  */
-class CdpClientImpl {
+class CdpClientImpl extends CdpClient{
    constructor() {
+      super();
       console.log(`[CdpClientImpl] Initialized for LIVE trading.`);
    }
 
@@ -72,7 +74,7 @@ class CdpClientImpl {
          };
 
          const payload = {
-            client_order_id: `my-bot-order-${Date.now()}`,
+            client_order_id: `tradebot-market-order-${Date.now()}`,
             product_id: ticker,
             side: side === 'BUY' ? 'BUY' : 'SELL', // Ensure Coinbase's expected 'BUY'/'SELL'
             order_configuration: {
@@ -91,6 +93,94 @@ class CdpClientImpl {
       } catch (error) {
          console.error(`[CdpClientImpl] Error placing LIVE order for ${ticker}:`, error.response ? error.response.data : error.message);
          throw new Error(`Failed to place order: ${error.response ? JSON.stringify(error.response.data) : error.message}`);
+      }
+   }
+
+   async placeLimitBuyOrder(ticker, quantity, limitPrice) {
+      const orderDetails = {
+         ticker,
+         side: 'BUY',
+         quantity,
+         limitPrice,
+         type: 'LIMIT',
+         timestamp: new Date().toISOString(),
+      };
+
+      console.log(`[CdpClientImpl] Attempting to place LIVE LIMIT BUY order:`, orderDetails);
+      try {
+         const method = 'POST';
+         const requestPath = '/api/v3/brokerage/orders';
+         const token = await getAuthToken(method, requestPath);
+         const headers = {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json',
+         };
+
+         const orderConfiguration = {
+                  limit_limit_gtc: {
+                     base_size: quantity.toString(),
+                     limit_price: limitPrice.toString(),
+                     post_only: true, // guaranteed maker even at the risk of rejection
+                  }
+               };
+
+
+         const payload = {
+            client_order_id: `tradebot-limit-buy-${Date.now()}`,
+            product_id: ticker,
+            side: 'BUY',
+            order_configuration: orderConfiguration
+         };
+
+         const response = await axios.post(`${COINBASE_API_BASE_URL}${requestPath}`, payload, { headers });
+         console.log(`[CdpClientImpl] LIVE LIMIT BUY order placed successfully for ${ticker}:`, response.data);
+         return response.data;
+      } catch (error) {
+         console.error(`[CdpClientImpl] Error placing LIVE LIMIT BUY order for ${ticker}:`, error.response ? error.response.data : error.message);
+         throw new Error(`Failed to place LIMIT BUY order: ${error.response ? JSON.stringify(error.response.data) : error.message}`);
+      }
+   }
+
+   async placeLimitSellOrder(ticker, quantity, limitPrice) {
+      const orderDetails = {
+         ticker,
+         side: 'SELL',
+         quantity,
+         limitPrice,
+         type: 'LIMIT',
+         timestamp: new Date().toISOString(),
+      };
+      console.log(`[CdpClientImpl] Attempting to place LIVE LIMIT SELL order:`, orderDetails);
+      try {
+         const method = 'POST';
+         const requestPath = '/api/v3/brokerage/orders';
+         const token = await getAuthToken(method, requestPath);
+         const headers = {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json',
+         };
+
+         let orderConfiguration = {
+                  limit_limit_gtc: {
+                     base_size: quantity.toString(),
+                     limit_price: limitPrice.toString(),
+                     post_only: true,
+                  }
+               };
+
+         const payload = {
+            client_order_id: `tradebot-limit-sell-${Date.now()}`,
+            product_id: ticker,
+            side: 'SELL',
+            order_configuration: orderConfiguration
+         };
+
+         const response = await axios.post(`${COINBASE_API_BASE_URL}${requestPath}`, payload, { headers });
+         console.log(`[CdpClientImpl] LIVE LIMIT SELL order placed successfully for ${ticker}:`, response.data);
+         return response.data;
+      } catch (error) {
+         console.error(`[CdpClientImpl] Error placing LIVE LIMIT SELL order for ${ticker}:`, error.response ? error.response.data : error.message);
+         throw new Error(`Failed to place LIMIT SELL order: ${error.response ? JSON.stringify(error.response.data) : error.message}`);
       }
    }
 

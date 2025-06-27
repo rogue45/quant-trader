@@ -3,12 +3,15 @@
  * used specifically for simulation/test mode.
  */
 
+const CdpClient = require("./CdpClient");
+
 /**
  * A mock representation of the Coinbase Advanced Trade API client.
  * This class simulates API responses without making actual network requests.
  */
-class CdpClientMock {
+class CdpClientMock extends CdpClient {
    constructor() {
+      super();
       console.log(`[CdpClientMock] Initialized for SIMULATION mode.`);
       // You can initialize mock state here if needed
    }
@@ -58,15 +61,16 @@ class CdpClientMock {
     * @returns {Promise<object>} A mock order response.
     */
    async placeMarketOrder(ticker, side, quantity) {
-      const orderDetails = {
-         ticker,
-         side,
-         quantity,
-         type: 'MARKET',
-         timestamp: new Date().toISOString(),
-      };
       console.log(`[CdpClientMock] SIMULATION: Would have placed a ${side} market order for ${quantity} of ${ticker}.`);
       return Promise.resolve({ success: true, message: "Simulated order placed." });
+   }
+
+   async placeLimitBuyOrder(ticker, quantity, limitPrice, timeInForce = 'GTC') {
+      console.log(`[CdpClientMock] SIMULATION: Would have placed a ${side} limit BUY order for ${quantity} of ${ticker}.`);
+   }
+
+   placeLimitSellOrder() {
+      console.log(`[CdpClientMock] SIMULATION: Would have placed a ${side} limit SELL order for ${quantity} of ${ticker}.`);
    }
 
    /**

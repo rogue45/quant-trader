@@ -11,6 +11,10 @@ class CdpClient {
    getAccountAssetHoldings() {
       throw new Error("Method 'getAccountAssetHoldings' must be implemented.");
    }
+
+   placeMarketOrder() {
+      throw new Error("Method 'placeMarketOrder' must be implemented.");
+   }
    placeLimitBuyOrder() {
       throw new Error("Method 'placeLimitBuyOrder' must be implemented.");
    }
