@@ -9,12 +9,12 @@
   },
   "buy_rules": [
     {
-      "id": "5% dip from sma",
+      "id": "7% dip from sma",
       "description": "Buy if price drops 7% from sma",
       "type": "sma_dip_percentage",
       "params": {
-        "sma_days": 3,
-        "percentage_below_sma": 5
+        "sma_days": 1,
+        "percentage_below_sma": 7
       }
     }
   ],

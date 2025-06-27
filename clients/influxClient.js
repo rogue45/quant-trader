@@ -46,9 +46,8 @@ async function getHistoricalPrices(ticker, range = "-1h") {
    const prices = [];
    try {
       for await (const { values, tableMeta } of queryApi.iterateRows(fluxQuery)) {
-         const o = rowsParser(tableMeta, values);
-
-         prices.push(o._value);
+         const rowObject = tableMeta.toObject(values);
+         prices.push(parseFloat(rowObject._value));
       }
    } catch (error) {
       console.error(`[${new Date().toISOString()}] Error querying historical prices for ${ticker}:`, error);
@@ -73,8 +72,9 @@ async function getLatestPrice(ticker) {
 
    let latestPrice = null;
    try {
-      for await (const { values } of queryApi.iterateRows(fluxQuery)) {
-         latestPrice = values[5];
+      for await (const { values, tableMeta } of queryApi.iterateRows(fluxQuery)) {
+         const rowObject = tableMeta.toObject(values);
+         latestPrice = rowObject._value;
          break;
       }
    } catch (error) {
