@@ -58,13 +58,10 @@ async function startService() {
    console.log(`[${new Date().toISOString()}] Starting trading bot service...`);
    runITTTEngine(); // Start the main trading loop
 }
-
-// Start the service when the script is executed
 startService().catch(error => {
    console.error(`[${new Date().toISOString()}] Uncaught error in startService:`, error);
    process.exit(1);
 });
-
 
 /**
  * Initializes the bot's state, fetching account balances and historical data.
@@ -72,13 +69,11 @@ startService().catch(error => {
 async function initializeBotState() {
   console.log(`[${new Date().toISOString()}] Initializing bot state...`);
 
-
-
-
   // 1. Get initial account balances
   try {
      const portfolios = await coinbaseClient.listPortfolios();
      const defaultPortfolio = portfolios.portfolios.find(p => p.name === "Default");
+     // By default this bot only interacts with default portfolio
      const defaultPortfolioId = defaultPortfolio.uuid;
      const portfolioAssets = await coinbaseClient.getPortfolio(defaultPortfolioId);
 
@@ -104,13 +99,12 @@ async function runITTTEngine() {
   // Main loop interval (except when cooldown in effect)
   const intervalMinutes = CONFIG.polling_intervals.main_loop_minutes || 1;
 
-
   // 1. Refresh market data and account balances
   try {
     await initializeBotState();
   } catch (error) {
     console.error(`[${new Date().toISOString()}] Error refreshing data:`, error);
-    return; // Skip this loop iteration if data refresh fails
+    return;
   }
 
   const usdBalance = parseFloat(currentHoldings.find(b => b.asset === 'USD')?.quantity || '0');
@@ -153,7 +147,7 @@ async function runITTTEngine() {
             if (orderResult && orderResult.success !== false) { // Check for success, assuming live API might return `undefined` for success
               console.log(`[${new Date().toISOString()}] ORDER PLACED: Successfully processed BUY for ${adjustedQuantity} ${baseCurrency} of ${ticker}.`);
 
-              // Populated cooldown timer to space out trades
+              // Populated cool down timer to space out trades
               lastTradeTimestamp = Date.now();
 
               break; // Execute only the first matching buy rule for this ticker
@@ -178,6 +172,7 @@ async function runITTTEngine() {
     const ticker = assetName + "-USD"
     const currentPrice = parseFloat(currentMarketPrices[ticker]);
 
+    // Duh
     if(assetName === "USD") {
        continue;
     }
@@ -187,11 +182,11 @@ async function runITTTEngine() {
       continue; // Skip if no price data for this ticker
     }
 
-    const heldQuantityFromBalance = parseFloat(asset.quantity || '0');
+    const heldQuantityFromBalance = parseFloat(asset.quantity || 0);
 
-    // Only consider selling if the actual account balance shows we hold a significant quantity
-    if (heldQuantityFromBalance > 0) { // Check for a close match
-        const historicalPrices = await influxClient.getHistoricalPrices(ticker, "-24h"); // Get 24 hours of data for indicators
+
+    if (heldQuantityFromBalance > 0) {
+        const historicalPrices = await influxClient.getHistoricalPrices(ticker, "-25h"); // Get 24 hours of data for indicators
         if (historicalPrices.length < 20) {
             console.warn(`[${new Date().toISOString()}] Not enough historical price data for ${ticker} (${historicalPrices.length} points). Skipping sell rule evaluation.`);
             continue;
@@ -208,7 +203,7 @@ async function runITTTEngine() {
                     if (orderResult && orderResult.success !== false) {
                         console.log(`[${new Date().toISOString()}] ORDER PLACED: Successfully processed SELL for ${quantityToSell.toFixed(8)} ${assetName} of ${ticker}.`);
 
-                        // Populate cooldown timer to space out trades
+                        // Populate cool down timer to space out trades
                         lastTradeTimestamp = Date.now();
 
                         break; // Execute only the first matching sell rule for this ticker
@@ -229,7 +224,6 @@ async function runITTTEngine() {
 
   console.log(`[${new Date().toISOString()}] --- Loop End. Current Holdings Tracked:`, currentHoldings);
 
-
   // Schedule the next run
   setTimeout(runITTTEngine, intervalMinutes * 60 * 1000);
 }
@@ -249,11 +243,14 @@ function evaluateRuleCondition(ticker, rule, currentPrice, historicalPrices, hol
 
    switch (rule.type) {
       // Buy rule evals
-
       case "sma_dip_percentage":
          const sma = calculations.calculateSMA(hPrices, params.sma_days * 1440);
          if (sma === null) return false;
          const targetSmaPrice = sma * (1 - params.percentage_below_sma / 100);
+         console.log("---------------------------");
+         console.log(ticker + " buy evaluation")
+         console.log("SMA target: " + targetSmaPrice);
+         console.log("Current price: " + currentPrice);
          return currentPrice <= targetSmaPrice;
 
       case "bollinger_lower_band_cross":
@@ -263,7 +260,6 @@ function evaluateRuleCondition(ticker, rule, currentPrice, historicalPrices, hol
          console.log("BB lower: " + bbLower.lowerBand);
          console.log("Current price: " + currentPrice);
          return bbLower && bbLower.lowerBand !== null && currentPrice <= bbLower.lowerBand;
-
 
       case "roc_dip":
          // ROC needs current price and past prices.
@@ -286,7 +282,6 @@ function evaluateRuleCondition(ticker, rule, currentPrice, historicalPrices, hol
          console.log("meetsSellCriteria: " +  holdingDetails.average_usd_price >= targetProfitPrice);
          return currentPrice >= targetProfitPrice;
 
-
       case "bollinger_upper_band_cross":
          const bbUpper = calculations.calculateBollingerBands(hPrices, params.period, params.std_dev_multiplier);
          return bbUpper && bbUpper.upperBand !== null && currentPrice >= bbUpper.upperBand;
@@ -299,10 +294,6 @@ function evaluateRuleCondition(ticker, rule, currentPrice, historicalPrices, hol
          const rocSell = calculations.calculateROC(pricesForRocSell, params.roc_period);
          return rocSell !== null && rocSell >= params.spike_percentage_trigger && currentPrice > holdingDetails.average_usd_price;
 
-      // case "stop_loss_percentage":
-      //    if (!holdingDetails || typeof  holdingDetails.average_usd_price !== 'number') return false;
-      //    const targetStopPrice =  holdingDetails.average_usd_price * (1 - params.percentage_below_purchase / 100);
-      //    return currentPrice <= targetStopPrice;
       default:
          console.warn(`[${new Date().toISOString()}] Unknown rule type: ${rule.type} for rule ID '${rule.id}'.`);
          return false;

@@ -5,16 +5,17 @@
   },
   "tickers_to_watch": [ "BTC-USD", "ETH-USD", "XRP-USD" ],
   "account": {
-    "trade_allocation_usd": 20.00
+    "trade_allocation_usd": 10.00
   },
   "buy_rules": [
     {
-      "id": "7% dip from sma",
-      "description": "Buy if price drops 7% from sma",
+      "id": "5% dip from sma",
+      "description": "Buy if price drops 5% from sma",
       "type": "sma_dip_percentage",
       "params": {
         "sma_days": 1,
-        "percentage_below_sma": 7
+        "percentage_below_sma": 5
+
       }
     }
   ],
@@ -37,9 +38,7 @@
     "url": "http://192.168.1.53:8086",
     "org": "deremworks",
     "bucket": "market_data",
-    "price_measurement": "spot_price",
-    "trade_events_bucket": "trade_logs",
-    "trade_events_measurement": "trading_events"
+    "price_measurement": "spot_price"
   },
   "logging": {
     "level": "info"

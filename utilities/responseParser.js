@@ -1,4 +1,5 @@
 const responseParser = {
+   // No longer used since portfolio has more info
    parseAccountBalances: function(response) {
       return response.accounts.map(account => ({
          currency: account.available_balance.currency,

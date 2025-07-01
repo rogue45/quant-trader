@@ -14,9 +14,8 @@ function initializeInfluxClient(config) {
    const token = process.env.INFLUX_DB_TOKEN;
    const org = CONFIG.influxdb.org;
    const marketDataBucket = CONFIG.influxdb.bucket; // market_data
-   const tradeLogsBucket = CONFIG.influxdb.trade_events_bucket; // trade_logs
 
-   if (!url || !token || !org || !marketDataBucket || !tradeLogsBucket) {
+   if (!url || !token || !org || !marketDataBucket) {
       console.error("InfluxDB configuration is incomplete. Skipping InfluxDB initialization.");
       return;
    }
@@ -81,34 +80,6 @@ async function getLatestPrice(ticker) {
       console.error(`[${new Date().toISOString()}] Error querying latest price for ${ticker}:`, error);
    }
    return latestPrice;
-}
-
-
-
-function rowsParser(keyObjectArray, valuesArray) {
-   const resultObject = {};
-
-   let keysArray = keyObjectArray.columns.map(obj => obj.label);
-
-   // Validate inputs
-   if (!Array.isArray(valuesArray)) {
-      console.error("Values Input must be arrays.");
-      return resultObject;
-   }
-
-   if (keysArray.length !== valuesArray.length) {
-      console.error("Arrays must be of equal length to create a valid object.");
-      return resultObject;
-   }
-
-   // Iterate over the arrays and populate the object
-   for (let i = 0; i < keysArray.length; i++) {
-      const key = String(keysArray[i]);   // Ensure key is a string
-      const value = String(valuesArray[i]); // Ensure value is a string
-      resultObject[key] = value;
-   }
-
-   return resultObject;
 }
 
 module.exports = {
