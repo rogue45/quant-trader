@@ -1,7 +1,14 @@
 # quant-trader
-Holds quant trading algorithms and utilizes quant-datafetcher data for algo decisions.
+A crypto tradebot that works with coinbase to target volatility.
+
+Market data: first I created a simple containerized nodejs app that fetches current market data and stores it to a containerized influx db. 
+Once i had historical market data it was on to the tradebot.
+I then created a simple tradebot loop. It looks at configured crypto tickers to watch. Every minute it loops over them and first analyzes configured buy rules. If i have available funds and finds any positive match it buys a configured amount. Currently i have a cooldown time to wait before another action to space out purchases.
+
+Sell rules for current holdings are then iteratively checked for a match.
 
 Each rule object within buy_rules and sell_rules arrays has the following structure:
+
 ```
 {
 "id": "unique_rule_identifier",       // A unique name for this rule (e.g., "buy_sma_dip_btc")
